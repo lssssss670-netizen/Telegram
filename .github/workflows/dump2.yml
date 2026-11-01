@@ -1,0 +1,54 @@
+name: Dump TL classes
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract TL class definitions
+        run: |
+          mkdir -p out
+          python3 - <<'PY'
+          import glob, re
+          names = """User TL_user UserStatus TL_userStatusEmpty TL_userStatusOnline TL_userStatusOffline UserProfilePhoto TL_userProfilePhotoEmpty
+          TL_auth_authorization Chat TL_chat TL_chatEmpty Peer TL_peerUser TL_peerChat InputPeer TL_inputPeerUser TL_inputPeerChat TL_inputPeerSelf
+          TL_messages_getDialogs messages_Dialogs TL_messages_dialogs TL_messages_dialogsSlice Dialog TL_dialog
+          Message TL_message MessageMedia TL_messageMediaEmpty TL_messages_getHistory messages_Messages TL_messages_messages TL_messages_messagesSlice
+          TL_messages_sendMessage Updates TL_updates TL_updateShortSentMessage TL_updateNewMessage TL_updateMessageID Update
+          TL_updates_getState TL_updates_state TL_updates_getDifference updates_Difference TL_updates_difference TL_updates_differenceEmpty
+          TL_contacts_search TL_contacts_found TL_contacts_getContacts contacts_Contacts TL_contacts_contacts TL_contact
+          TL_users_getUsers TL_messages_readHistory TL_messages_affectedMessages TL_messages_affectedHistory TL_messages_deleteMessages
+          TL_error TL_peerNotifySettings TL_messages_getPeerDialogs TL_messages_peerDialogs TL_messages_getFullChat TL_messages_chatFull TL_userFull TL_users_getFullUser TL_users_userFull""".split()
+          files = glob.glob('TMessagesProj/src/main/java/org/telegram/tgnet/**/*.java', recursive=True)
+          src = {f: open(f, encoding='utf-8', errors='replace').read().split('\n') for f in files}
+          out = open('out/classes.txt', 'w')
+          for n in names:
+              rx = re.compile(r'^\s*(public\s+)?(static\s+)?(abstract\s+)?class\s+' + re.escape(n) + r'\b')
+              found = False
+              for f, lines in src.items():
+                  for i, l in enumerate(lines):
+                      if rx.search(l):
+                          ind = len(l) - len(l.lstrip())
+                          out.write('\n===== %s  (%s:%d)\n' % (n, f.split('/')[-1], i + 1))
+                          cnt = 0
+                          for j in range(i, min(i + 140, len(lines))):
+                              out.write(lines[j] + '\n'); cnt += 1
+                              if j > i and lines[j].startswith(' ' * ind + '}') and len(lines[j]) - len(lines[j].lstrip()) == ind:
+                                  break
+                              if cnt > 90: out.write('   ...cut...\n'); break
+                          found = True; break
+                  if found: break
+              if not found: out.write('\n===== %s  NOT FOUND\n' % n)
+          PY
+          cp TMessagesProj/src/main/java/org/telegram/tgnet/TLObject.java TMessagesProj/src/main/java/org/telegram/tgnet/TLMethod.java TMessagesProj/src/main/java/org/telegram/tgnet/RequestDelegate.java out/ 2>/dev/null || true
+          find TMessagesProj/src/main/java/org/telegram/ui -maxdepth 1 -name 'MainTabsActivity.java' -exec cp {} out/ \;
+          wc -l out/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tl-classes
+          path: out
