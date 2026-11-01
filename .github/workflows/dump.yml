@@ -1,0 +1,28 @@
+name: Dump core sources
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect files
+        run: |
+          mkdir -p out/src
+          for n in LaunchActivity UserConfig ConnectionsManager BuildVars ApplicationLoader IntroActivity LoginActivity; do
+            f=$(find TMessagesProj/src/main/java/org/telegram -name "$n.java" | head -n 1)
+            if [ -n "$f" ]; then cp "$f" "out/src/$n.java"; echo "$f" >> out/paths.txt; fi
+          done
+          # ساختار پروژه و اسم فایل‌های TL/tgnet
+          ls TMessagesProj/src/main/java/org/telegram/tgnet > out/tgnet_files.txt
+          find . -iname 'TLRPC*' -not -path './.git/*' | head -n 50 > out/tlrpc_files.txt
+          find . -maxdepth 2 -not -path './.git*' -not -path './TMessagesProj/jni*' > out/tree.txt
+          ls -la out/src
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-sources
+          path: out
