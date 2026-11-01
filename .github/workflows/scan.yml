@@ -1,0 +1,44 @@
+name: Scan Telegram leftovers
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply JikJik files
+        run: |
+          if [ -f jikjik_project_files.zip ]; then unzip -o jikjik_project_files.zip > /dev/null; fi
+
+      - name: Scan
+        run: |
+          mkdir -p out
+          # 1) متن‌های قابل‌دیدن توی resourceها که هنوز Telegram دارن
+          python3 - <<'PY' > out/res_texts.txt
+          import glob, re
+          import xml.etree.ElementTree as ET
+          files = glob.glob('TMessagesProj/src/main/res/**/*.xml', recursive=True) + glob.glob('TMessagesProj_App/src/**/*.xml', recursive=True)
+          for f in sorted(files):
+              try:
+                  root = ET.parse(f).getroot()
+              except Exception:
+                  continue
+              for el in root.iter():
+                  t = ''.join(el.itertext()).strip()
+                  if el.tag in ('string', 'item', 'plurals') and re.search('telegram', t, re.I) and 'http' not in t:
+                      print(f.split('/res/')[-1], el.get('name'), '|', t[:120].replace('\n', ' '))
+          PY
+          # 2) رشته‌های داخل کد جاوا/کاتلین
+          grep -rnE --include=*.java --include=*.kt '"[^"]*Telegram[^"]*"' TMessagesProj/src TMessagesProj_App/src 2>/dev/null \
+            | grep -vE 'org\.telegram|t\.me|telegram\.org|telegram\.me' | cut -c1-230 > out/java_literals.txt || true
+          # 3) اسم فایل‌هایی که telegram/tg دارن (آیکون، تصویر، انیمیشن)
+          find TMessagesProj/src/main/res TMessagesProj/src/main/assets \( -iname '*telegram*' -o -iname 'intro_tg*' -o -iname '*tgplane*' \) 2>/dev/null > out/files.txt || true
+          wc -l out/*.txt | tee out/summary.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: telegram-leftovers
+          path: out
