@@ -23,6 +23,14 @@ jobs:
             echo "jikjik_project_files.zip not found in repo root"; exit 1
           fi
 
+      - name: Rebrand (JikJik names, colors, logos)
+        run: |
+          pip install pillow > /dev/null
+          python3 tools/rebrand.py
+
+      - name: Connect app to the JikJik API (login screen, requests, sync)
+        run: python3 tools/patch_core.py
+
       - name: Build only arm64 (faster, ~12 min instead of ~45)
         run: |
           grep -rl --include=build.gradle 'abiFilters' . | xargs sed -i -E 's/abiFilters[[:space:]]+.*/abiFilters "arm64-v8a"/'
