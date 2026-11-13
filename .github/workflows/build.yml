@@ -48,10 +48,32 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
+      - name: Restore native build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            TMessagesProj/.cxx
+            TMessagesProj/build/intermediates/cxx
+          key: native-arm64-${{ hashFiles('.gitmodules', 'TMessagesProj/jni/CMakeLists.txt') }}
+          restore-keys: |
+            native-arm64-
+
+      - name: Freeze native source timestamps (keeps cached objects valid)
+        run: find TMessagesProj/jni -type f -exec touch -d '2001-01-01 00:00:00' {} + || true
+
       - name: Build APK
         run: |
           chmod +x gradlew
-          ./gradlew :TMessagesProj_App:assembleAfatRelease --no-daemon --stacktrace
+          ./gradlew :TMessagesProj_App:assembleAfatRelease --no-daemon --stacktrace -Pandroid.injected.build.abi=arm64-v8a
+
+      - name: Save native build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            TMessagesProj/.cxx
+            TMessagesProj/build/intermediates/cxx
+          key: native-arm64-${{ hashFiles('.gitmodules', 'TMessagesProj/jni/CMakeLists.txt') }}-${{ github.run_id }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
