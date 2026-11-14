@@ -1,0 +1,17 @@
+      - name: Collect APK Files
+        shell: bash
+        run: |
+          mkdir -p artifacts
+
+          find . -type f -name "*.apk" \
+            -not -path "*/.git/*" \
+            -not -path "*/build/intermediates/*" \
+            -exec cp {} artifacts/ \;
+
+          echo "Found APK files:"
+          ls -lh artifacts/
+
+          if ! find artifacts -name "*.apk" | grep -q .; then
+            echo "ERROR: No APK generated!"
+            exit 1
+          fi
