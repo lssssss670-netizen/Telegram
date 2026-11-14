@@ -1,4 +1,4 @@
-name: Build JikJik APK
+herename: Build JikJik APK
 
 on:
   workflow_dispatch:
@@ -30,6 +30,16 @@ jobs:
 
       - name: Connect app to the JikJik API (login screen, requests, sync)
         run: python3 tools/patch_core.py
+
+      - name: Verify JikJik TL update import
+        shell: bash
+        run: |
+          SYNC=TMessagesProj/src/main/java/org/telegram/messenger/jik/JikSync.java
+          grep -Fqx 'import org.telegram.tgnet.tl.TL_update;' "$SYNC"
+          if grep -Fq 'import org.telegram.tgnet.TL_update;' "$SYNC"; then
+            echo 'Incorrect TL_update package import found in JikSync.java'
+            exit 1
+          fi
 
       - name: Build only arm64 (faster, ~12 min instead of ~45)
         run: |
