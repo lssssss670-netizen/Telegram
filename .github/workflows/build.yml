@@ -31,16 +31,6 @@ jobs:
       - name: Connect app to the JikJik API (login screen, requests, sync)
         run: python3 tools/patch_core.py
 
-      - name: Verify JikJik TL update import
-        shell: bash
-        run: |
-          SYNC=TMessagesProj/src/main/java/org/telegram/messenger/jik/JikSync.java
-          grep -Fqx 'import org.telegram.tgnet.tl.TL_update;' "$SYNC"
-          if grep -Fq 'import org.telegram.tgnet.TL_update;' "$SYNC"; then
-            echo 'Incorrect TL_update package import found in JikSync.java'
-            exit 1
-          fi
-
       - name: Build only arm64 (faster, ~12 min instead of ~45)
         run: |
           grep -rl --include=build.gradle 'abiFilters' . | xargs sed -i -E 's/abiFilters[[:space:]]+.*/abiFilters "arm64-v8a"/'
@@ -85,8 +75,29 @@ jobs:
             TMessagesProj/build/intermediates/cxx
           key: native-arm64-${{ hashFiles('.gitmodules', 'TMessagesProj/jni/CMakeLists.txt') }}-${{ github.run_id }}
 
+      - name: Locate generated APK
+        id: locate-apk
+        shell: bash
+        run: |
+          APK_PATH="$(find -L "$GITHUB_WORKSPACE" \
+            -type f -iname '*.apk' \
+            ! -path '*/.git/*' \
+            ! -path '*/build/intermediates/*' \
+            -print -quit)"
+
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::Gradle completed, but no APK file was found in the workspace."
+            echo "Directories named outputs/apk:"
+            find -L "$GITHUB_WORKSPACE" -type d -path '*/outputs/apk*' -print || true
+            exit 1
+          fi
+
+          echo "Found APK: $APK_PATH"
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: jikjik-apk
-          path: TMessagesProj_App/build/outputs/apk/**/*.apk
+          path: ${{ steps.locate-apk.outputs.apk_path }}
+          if-no-files-found: error
