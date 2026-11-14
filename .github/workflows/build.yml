@@ -1,4 +1,4 @@
-herename: Build JikJik APK
+name: Build JikJik APK
 
 on:
   workflow_dispatch:
