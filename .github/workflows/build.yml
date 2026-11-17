@@ -1,103 +1,85 @@
 name: Build JikJik APK
 
+# سه حالت اجرا:
+#  1) هر Push روی مخزن
+#  2) دکمهٔ Run workflow در تب Actions
+#  3) فایل ZIP پروژه را در ریشهٔ مخزن بگذارید؛ همین Workflow آن را استخراج و بیلد می‌کند
 on:
+  push:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 40
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      - name: Apply JikJik files
+      - name: Find project (extract ZIP if needed)
+        id: proj
+        shell: bash
         run: |
-          if [ -f jikjik_project_files.zip ]; then
-            # remove old launcher icons (any extension) to avoid duplicate-resource errors
-            find TMessagesProj/src/main/res -path '*mipmap*' \( -name 'ic_launcher.*' -o -name 'ic_launcher_round.*' \) -delete
-            unzip -o jikjik_project_files.zip
+          set -e
+          ROOT=""
+          # اگر پروژه مستقیم در مخزن باشد
+          if [ -f settings.gradle ] || [ -f settings.gradle.kts ]; then
+            ROOT="."
           else
-            echo "jikjik_project_files.zip not found in repo root"; exit 1
+            # در غیر این صورت اولین ZIP مخزن را استخراج می‌کنیم
+            ZIP=$(find . -maxdepth 3 -type f -iname '*.zip' -not -path './.git/*' | head -n 1)
+            if [ -z "$ZIP" ]; then
+              echo "::error::No project found. Put the project .zip (or the extracted project) in the repository."
+              exit 1
+            fi
+            echo "Extracting: $ZIP"
+            rm -rf "$RUNNER_TEMP/proj" && mkdir -p "$RUNNER_TEMP/proj"
+            unzip -q -o "$ZIP" -d "$RUNNER_TEMP/proj"
+            S=$(find "$RUNNER_TEMP/proj" -type f \( -name settings.gradle -o -name settings.gradle.kts \) -not -path '*/node_modules/*' | head -n 1)
+            if [ -z "$S" ]; then
+              echo "::error::settings.gradle not found inside the zip."
+              exit 1
+            fi
+            ROOT=$(dirname "$S")
           fi
+          echo "Project root: $ROOT"
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
 
-      - name: Rebrand (JikJik names, colors, logos)
-        run: |
-          pip install pillow > /dev/null
-          python3 tools/rebrand.py
-
-      - name: Connect app to the JikJik API (login screen, requests, sync)
-        run: python3 tools/patch_core.py
-
-      - name: Build only arm64 (faster, ~12 min instead of ~45)
-        run: |
-          grep -rl --include=build.gradle 'abiFilters' . | xargs sed -i -E 's/abiFilters[[:space:]]+.*/abiFilters "arm64-v8a"/'
-          grep -rn --include=build.gradle 'abiFilters' . || true
-
-      - name: Set up Java 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
 
-      - name: Install SDK / NDK / CMake (preinstalled SDK of the runner)
-        run: |
-          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKM" --licenses > /dev/null || true
-          "$SDKM" --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
-
-      - name: Restore native build cache
-        uses: actions/cache/restore@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
         with:
-          path: |
-            TMessagesProj/.cxx
-            TMessagesProj/build/intermediates/cxx
-          key: native-arm64-${{ hashFiles('.gitmodules', 'TMessagesProj/jni/CMakeLists.txt') }}
-          restore-keys: |
-            native-arm64-
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
-      - name: Freeze native source timestamps (keeps cached objects valid)
-        run: find TMessagesProj/jni -type f -exec touch -d '2001-01-01 00:00:00' {} + || true
-
-      - name: Build APK
-        run: |
-          chmod +x gradlew
-          ./gradlew :TMessagesProj_App:assembleAfatRelease --no-daemon --stacktrace -Pandroid.injected.build.abi=arm64-v8a
-
-      - name: Save native build cache
-        if: always()
-        uses: actions/cache/save@v4
+      # پروژه Gradle Wrapper ندارد؛ نسخهٔ سازگار با AGP 8.6.1 نصب می‌شود
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          path: |
-            TMessagesProj/.cxx
-            TMessagesProj/build/intermediates/cxx
-          key: native-arm64-${{ hashFiles('.gitmodules', 'TMessagesProj/jni/CMakeLists.txt') }}-${{ github.run_id }}
+          gradle-version: '8.9'
 
-      - name: Locate generated APK
-        id: locate-apk
+      - name: Build debug APK
+        working-directory: ${{ steps.proj.outputs.root }}
         shell: bash
         run: |
-          APK_PATH="$(find -L "$GITHUB_WORKSPACE" \
-            -type f -iname '*.apk' \
-            ! -path '*/.git/*' \
-            ! -path '*/build/intermediates/*' \
-            -print -quit)"
+          if [ -x ./gradlew ]; then ./gradlew --no-daemon assembleDebug --stacktrace
+          else gradle --no-daemon assembleDebug --stacktrace; fi
 
-          if [ -z "$APK_PATH" ]; then
-            echo "::error::Gradle completed, but no APK file was found in the workspace."
-            echo "Directories named outputs/apk:"
-            find -L "$GITHUB_WORKSPACE" -type d -path '*/outputs/apk*' -print || true
-            exit 1
-          fi
-
-          echo "Found APK: $APK_PATH"
-          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/apk-out"
+          find "${{ steps.proj.outputs.root }}" -path '*/build/outputs/apk/*' -name '*.apk' -exec cp {} "$GITHUB_WORKSPACE/apk-out/" \;
+          ls -la "$GITHUB_WORKSPACE/apk-out"
+          test -n "$(ls -A "$GITHUB_WORKSPACE/apk-out")"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: jikjik-apk
-          path: ${{ steps.locate-apk.outputs.apk_path }}
+          name: JikJik-APK
+          path: apk-out/*.apk
           if-no-files-found: error
